@@ -1,0 +1,353 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "provenance": [],
+      "authorship_tag": "ABX9TyMYly8t2qQBp9hnv7pZEz9W",
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/krishshah3001-prog/Algorithmic-Trading---Finance-and-Analytics-Club-Winter-Project-2025-26/blob/main/FINALE_FAC_250998\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 30,
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "Lfz1pG4BsuJf",
+        "outputId": "a7b9c370-758c-45c6-9e94-54575a741538"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "\r[*********************100%***********************]  1 of 1 completed\n"
+          ]
+        }
+      ],
+      "source": [
+        "import numpy as np\n",
+        "import pandas as pd\n",
+        "import yfinance as yf\n",
+        "\n",
+        "# Download TCS 2023 daily data\n",
+        "data = yf.download(\"TCS.NS\", start=\"2023-01-01\", end=\"2023-12-31\", interval=\"1d\", auto_adjust=True)\n",
+        "data = data.reset_index()\n",
+        "data[\"Close\"] = data[\"Close\"].astype(float)\n",
+        "\n",
+        "def add_ema(data, period):\n",
+        "    data[f\"EMA_{period}\"] = data[\"Close\"].ewm(span=period, adjust=False).mean()\n",
+        "    return data\n",
+        "\n",
+        "def add_rsi(data, period=14):\n",
+        "    delta = data[\"Close\"].diff()\n",
+        "    gain = delta.clip(lower=0)\n",
+        "    loss = (-delta).clip(lower=0)\n",
+        "    avg_gain = gain.rolling(period).mean()\n",
+        "    avg_loss = loss.rolling(period).mean()\n",
+        "    rs = avg_gain / avg_loss\n",
+        "    data[\"RSI\"] = 100 - (100 / (1 + rs))\n",
+        "    return data\n",
+        "\n",
+        "def generate_strategy(data):\n",
+        "    data = add_ema(data, 20)\n",
+        "    data = add_ema(data, 50)\n",
+        "    data = add_rsi(data, 14)\n",
+        "\n",
+        "    data[\"Signal\"] = 0\n",
+        "    cond = (data[\"EMA_20\"] > data[\"EMA_50\"]) & (data[\"RSI\"] < 30)\n",
+        "    data.loc[cond.fillna(False), \"Signal\"] = 1\n",
+        "    return data\n",
+        "\n",
+        "def backtest_engine(data, signal):\n",
+        "    capital = 100000\n",
+        "    initial_capital = capital\n",
+        "    stop_loss_pct = 0.03\n",
+        "    take_profit_pct = 0.06\n",
+        "    in_trade = False\n",
+        "    entry_price = 0.0\n",
+        "    qty = 0\n",
+        "    equity_curve = []\n",
+        "    total_trades = 0\n",
+        "    winning_trades = 0\n",
+        "    losing_trades = 0\n",
+        "\n",
+        "    for i in range(len(data)):\n",
+        "        price = float(data[\"Close\"].iloc[i])\n",
+        "        sig = int(signal.iloc[i])\n",
+        "\n",
+        "        if not in_trade and sig == 1:\n",
+        "            qty = int(capital // price)\n",
+        "            if qty > 0:\n",
+        "                entry_price = price\n",
+        "                capital -= qty * price\n",
+        "                in_trade = True\n",
+        "                total_trades += 1\n",
+        "\n",
+        "        elif in_trade:\n",
+        "            if price <= entry_price*(1-stop_loss_pct) or price >= entry_price*(1+take_profit_pct):\n",
+        "                pnl = qty*(price-entry_price)\n",
+        "                capital += qty*price\n",
+        "                if pnl > 0: winning_trades += 1\n",
+        "                else: losing_trades += 1\n",
+        "                qty = 0\n",
+        "                in_trade = False\n",
+        "\n",
+        "        equity = capital + (qty*price if in_trade else 0)\n",
+        "        equity_curve.append(equity)\n",
+        "\n",
+        "    equity_curve = np.array(equity_curve)\n",
+        "    net_profit = capital - initial_capital\n",
+        "    returns = np.diff(equity_curve)/equity_curve[:-1]\n",
+        "    sharpe_ratio = (returns.mean()/returns.std()*np.sqrt(252)) if returns.std() != 0 else 0\n",
+        "    running_max = np.maximum.accumulate(equity_curve)\n",
+        "    drawdown = (equity_curve - running_max)/running_max\n",
+        "    max_drawdown = drawdown.min()*100\n",
+        "\n",
+        "    print(\"Net Profit:\", round(net_profit,2))\n",
+        "    print(\"Sharpe Ratio:\", round(sharpe_ratio,2))\n",
+        "    print(\"Max Drawdown (%):\", round(max_drawdown,2))\n",
+        "    print(\"Total Trades:\", total_trades)\n",
+        "    print(\"Winning Trades:\", winning_trades)\n",
+        "    print(\"Losing Trades:\", losing_trades)\n",
+        "\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "data = generate_strategy(data)\n",
+        "backtest_engine(data, data[\"Signal\"])"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "-RBOHHJKuaZD",
+        "outputId": "2f0d62b8-2fb8-4453-d26a-97792f7c8bb2"
+      },
+      "execution_count": 31,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Net Profit: 10521.86\n",
+            "Sharpe Ratio: 1.36\n",
+            "Max Drawdown (%): -6.13\n",
+            "Total Trades: 3\n",
+            "Winning Trades: 2\n",
+            "Losing Trades: 1\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "/tmp/ipython-input-1929861416.py:48: FutureWarning: Calling float on a single element Series is deprecated and will raise a TypeError in the future. Use float(ser.iloc[0]) instead\n",
+            "  price = float(data[\"Close\"].iloc[i])\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import numpy as np\n",
+        "import pandas as pd\n",
+        "import yfinance as yf\n",
+        "\n",
+        "data = yf.download(\"TCS.NS\", start=\"2023-01-01\", end=\"2023-12-31\", interval=\"1d\", auto_adjust=True)\n",
+        "data = data.reset_index()\n",
+        "data[\"Close\"] = data[\"Close\"].astype(float)\n",
+        "\n",
+        "def add_ema(data, period):\n",
+        "    data[f\"EMA_{period}\"] = data[\"Close\"].ewm(span=period, adjust=False).mean()\n",
+        "    return data\n",
+        "\n",
+        "def add_rsi(data, period=14):\n",
+        "    delta = data[\"Close\"].diff()\n",
+        "    gain = delta.clip(lower=0)\n",
+        "    loss = (-delta).clip(lower=0)\n",
+        "    avg_gain = gain.rolling(period).mean()\n",
+        "    avg_loss = loss.rolling(period).mean()\n",
+        "    rs = avg_gain / avg_loss\n",
+        "    data[\"RSI\"] = 100 - (100 / (1 + rs))\n",
+        "    return data\n",
+        "\n",
+        "def generate_strategy(data):\n",
+        "    data = add_ema(data, 20)\n",
+        "    data = add_ema(data, 50)\n",
+        "    data = add_rsi(data, 14)\n",
+        "    data[\"Signal\"] = 0\n",
+        "    # Long: EMA20>EMA50 & RSI<30\n",
+        "    data.loc[(data[\"EMA_20\"] > data[\"EMA_50\"]) & (data[\"RSI\"] < 30), \"Signal\"] = 1\n",
+        "    # Short: EMA20<EMA50 & RSI>70\n",
+        "    data.loc[(data[\"EMA_20\"] < data[\"EMA_50\"]) & (data[\"RSI\"] > 70), \"Signal\"] = -1\n",
+        "    return data\n",
+        "\n",
+        "def backtest_engine(data, signal):\n",
+        "    capital = 100000\n",
+        "    initial_capital = capital\n",
+        "    stop_loss_pct = 0.03\n",
+        "    take_profit_pct = 0.06\n",
+        "\n",
+        "    position = 0\n",
+        "    entry_price = 0.0\n",
+        "    trailing_stop = 0.0\n",
+        "    trailing_target = 0.0\n",
+        "    equity_curve = []\n",
+        "    total_trades = 0\n",
+        "    winning_trades = 0\n",
+        "    losing_trades = 0\n",
+        "\n",
+        "    for i in range(len(data)):\n",
+        "        price = float(data[\"Close\"].iloc[i])\n",
+        "        sig = int(signal.iloc[i])\n",
+        "\n",
+        "        if position == 0:  # enter new trade\n",
+        "            if sig == 1:\n",
+        "                qty = int(capital // price)\n",
+        "                if qty > 0:\n",
+        "                    position = qty\n",
+        "                    entry_price = price\n",
+        "                    capital -= qty*price\n",
+        "                    trailing_stop = price * (1 - stop_loss_pct)\n",
+        "                    trailing_target = price * (1 + take_profit_pct)\n",
+        "                    total_trades += 1\n",
+        "            elif sig == -1:\n",
+        "                qty = int(capital // price)\n",
+        "                if qty > 0:\n",
+        "                    position = -qty\n",
+        "                    entry_price = price\n",
+        "                    trailing_stop = price * (1 + stop_loss_pct)\n",
+        "                    trailing_target = price * (1 - take_profit_pct)\n",
+        "                    total_trades += 1\n",
+        "\n",
+        "        elif position > 0:  # long\n",
+        "            trailing_stop = max(trailing_stop, price*(1-stop_loss_pct))\n",
+        "            trailing_target = max(trailing_target, price*(1+take_profit_pct))\n",
+        "            if price <= trailing_stop or price >= trailing_target:\n",
+        "                pnl = position*(price - entry_price)\n",
+        "                capital += position*price\n",
+        "                if pnl > 0: winning_trades += 1\n",
+        "                else: losing_trades += 1\n",
+        "                position = 0\n",
+        "\n",
+        "        elif position < 0:  # short\n",
+        "            trailing_stop = min(trailing_stop, price*(1+stop_loss_pct))\n",
+        "            trailing_target = min(trailing_target, price*(1-take_profit_pct))\n",
+        "            if price >= trailing_stop or price <= trailing_target:\n",
+        "                pnl = -position*(entry_price - price)\n",
+        "                capital += -position*entry_price + pnl\n",
+        "                if pnl > 0: winning_trades += 1\n",
+        "                else: losing_trades += 1\n",
+        "                position = 0\n",
+        "\n",
+        "        equity = capital + (position*price if position != 0 else 0)\n",
+        "        equity_curve.append(equity)\n",
+        "\n",
+        "    if position != 0:  # close any open trade\n",
+        "        if position > 0:\n",
+        "            pnl = position*(price - entry_price)\n",
+        "            capital += position*price\n",
+        "        else:\n",
+        "            pnl = -position*(entry_price - price)\n",
+        "            capital += -position*entry_price + pnl\n",
+        "        if pnl > 0: winning_trades += 1\n",
+        "        else: losing_trades += 1\n",
+        "\n",
+        "    equity_curve = np.array(equity_curve)\n",
+        "    net_profit = capital - initial_capital\n",
+        "    returns = np.diff(equity_curve)/equity_curve[:-1]\n",
+        "    sharpe_ratio = (returns.mean()/returns.std()*np.sqrt(252)) if returns.std() != 0 else 0\n",
+        "    running_max = np.maximum.accumulate(equity_curve)\n",
+        "    drawdown = (equity_curve - running_max)/running_max\n",
+        "    max_drawdown = drawdown.min()*100\n",
+        "\n",
+        "    print(\"Net Profit:\", round(net_profit,2))\n",
+        "    print(\"Sharpe Ratio:\", round(sharpe_ratio,2))\n",
+        "    print(\"Max Drawdown (%):\", round(max_drawdown,2))\n",
+        "    print(\"Total Trades:\", total_trades)\n",
+        "    print(\"Winning Trades:\", winning_trades)\n",
+        "    print(\"Losing Trades:\", losing_trades)\n",
+        "\n",
+        "\n"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "nhjmD-b8Jk5e",
+        "outputId": "a85834cd-9c1a-44d3-b54e-afa9d23eba3c"
+      },
+      "execution_count": 33,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "\r[*********************100%***********************]  1 of 1 completed\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "data = generate_strategy(data)\n",
+        "backtest_engine(data, data[\"Signal\"])"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "pXc9rIAkJnLn",
+        "outputId": "1e95b2a5-441a-457c-a8b2-ac0fd0754081"
+      },
+      "execution_count": 34,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Net Profit: 125804.28\n",
+            "Sharpe Ratio: 1.04\n",
+            "Max Drawdown (%): -99.61\n",
+            "Total Trades: 5\n",
+            "Winning Trades: 2\n",
+            "Losing Trades: 3\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "/tmp/ipython-input-2953595140.py:50: FutureWarning: Calling float on a single element Series is deprecated and will raise a TypeError in the future. Use float(ser.iloc[0]) instead\n",
+            "  price = float(data[\"Close\"].iloc[i])\n"
+          ]
+        }
+      ]
+    }
+  ]
+}
